@@ -985,6 +985,12 @@
 
   var EMPTY_RANGE;
 
+  function Nullable(TypeFactory) {
+    return function (values) {
+      return values === null || values === undefined ? null : TypeFactory(values);
+    }
+  }
+
   createClass(Collection, Iterable);
     function Collection() {
       throw TypeError('Abstract');
@@ -3621,8 +3627,9 @@
 
   createClass(Record, KeyedCollection);
 
-    function Record(defaultValues, name) {
-      var hasInitialized;
+    function Record(valuesOrTypes, name) {
+      var defaultValues;
+      var factories;
 
       var RecordType = function Record(values) {
         if (values instanceof RecordType) {
@@ -3631,16 +3638,48 @@
         if (!(this instanceof RecordType)) {
           return new RecordType(values);
         }
-        if (!hasInitialized) {
-          hasInitialized = true;
-          var keys = Object.keys(defaultValues);
+        if (!defaultValues) {
+          defaultValues = {};
+
+          if (typeof valuesOrTypes === 'function') {
+            valuesOrTypes = valuesOrTypes();
+          }
+          var keys = Object.keys(valuesOrTypes);
+          for (var i = 0, l = keys.length; i < l; i++) {
+            var valueOrType = valuesOrTypes[keys[i]];
+            if (typeof valueOrType === 'function') {
+              if (!factories) {
+                factories = {};
+              }
+              factories[keys[i]] = valueOrType;
+            } else {
+              defaultValues[keys[i]] = valueOrType;
+            }
+          }
           setProps(RecordTypePrototype, keys);
           RecordTypePrototype.size = keys.length;
           RecordTypePrototype._name = name;
           RecordTypePrototype._keys = keys;
+          RecordTypePrototype._factories = factories;
+          if (factories) {
+            for (i = 0; i < l; i++) {
+              var factory = factories[keys[i]];
+              defaultValues[keys[i]] = factory();
+            }
+          }
           RecordTypePrototype._defaultValues = defaultValues;
         }
-        this._map = Map(values);
+
+        var map;
+        if (factories) {
+          map = Map(Seq(values).map(function(v, k)  {
+            var factory = factories[k];
+            return factory ? factory(v) : v;
+          }));
+        } else {
+          map = Map(values);
+        }
+        this._map = map;
       };
 
       var RecordTypePrototype = RecordType.prototype = Object.create(RecordPrototype);
@@ -3688,7 +3727,9 @@
           return this;
         }
       }
-      var newMap = this._map && this._map.set(k, v);
+      var factories = this._factories;
+      var factory = factories && factories[k];
+      var newMap = this._map && this._map.set(k, factory ? factory(v) : v);
       if (this.__ownerID || newMap === this._map) {
         return this;
       }
@@ -4984,6 +5025,7 @@
     OrderedSet: OrderedSet,
 
     Record: Record,
+    Nullable: Nullable,
     Range: Range,
     Repeat: Repeat,
 
